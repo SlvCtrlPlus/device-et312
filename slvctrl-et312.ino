@@ -2,14 +2,12 @@
 #include <Venerate.h>
 #include <SerialCommands.h>
 
-const String DEVICE_TYPE = "et312";
+const char* DEVICE_TYPE = "et312";
 const int FM_VERSION = 10000; // 1.00.00
 
 Venerate EBOX = Venerate(0);
 
 unsigned long starttime;
-int modepick[] = { ETMODE_waves, ETMODE_stroke, ETMODE_rhythm, ETMODE_climb, ETMODE_orgasm, ETMODE_phase2, ETMODE_random2, ETMODE_phase2, ETMODE_random2, ETMODE_stroke, ETMODE_phase2 };
-int nummodes = sizeof(modepick);
 
 char serial_command_buffer[32];
 SerialCommands serialCommands(&Serial, serial_command_buffer, sizeof(serial_command_buffer), "\n", " ");
@@ -26,7 +24,7 @@ void setup() {
     // Add commands
     serialCommands.SetDefaultHandler(commandUnrecognized);
     serialCommands.AddCommand(new SerialCommand("introduce", commandIntroduce));
-    serialCommands.AddCommand(new SerialCommand("device-status", commandDeviceStatus));
+    serialCommands.AddCommand(new SerialCommand("status", commandStatus));
     serialCommands.AddCommand(new SerialCommand("mode-set", commandModeSet));
     serialCommands.AddCommand(new SerialCommand("level-set", commandLevelSet));
     serialCommands.AddCommand(new SerialCommand("level-get", commandLevelGet));
@@ -54,14 +52,6 @@ void loop() {
 /** 
  * ET-312 functions 
  */
-void et312_set_mode(int p) {
-    EBOX.setbyte(ETMEM_mode, p-1);
-    EBOX.setbyte(ETMEM_command1, ETBUTTON_setmode);
-    delay(180);
-    EBOX.setbyte(ETMEM_command1, ETBUTTON_lockmode);
-    delay(180);
-}
-
 // Enable ADC: You get control over the potentiometers.
 void et312_enable_adc() {
     //  Read R15 from device
@@ -139,27 +129,49 @@ int et312_get_level(char channel) {
     return EBOX.getbyte(level_address);
 }
 
+int et312_get_mode() {
+    return EBOX.getbyte(ETMEM_mode);
+}
+
+void et312_set_mode(int p) {
+    EBOX.setbyte(ETMEM_mode, p);
+    EBOX.setbyte(ETMEM_command1, ETBUTTON_setmode);
+    delay(180);
+    EBOX.setbyte(ETMEM_command1, ETBUTTON_newmode);
+    delay(180);
+}
+
 /**
  * Commands
  */
 void commandIntroduce(SerialCommands* sender) {
-    sender->GetSerial()->println(DEVICE_TYPE + "," + FM_VERSION);
+    serial_printf(sender->GetSerial(), "%s,%d\n", DEVICE_TYPE, FM_VERSION);
 }
 
 void commandUnrecognized(SerialCommands* sender, const char* cmd)
 {
-    sender->GetSerial()->println(strprintf("Unrecognized command [%s]", cmd));
+    serial_printf(sender->GetSerial(), "Unrecognized command [%s]\n", cmd);
 }
 
-void commandDeviceStatus(SerialCommands* sender)
+void commandStatus(SerialCommands* sender)
 {  
-    String connected = "not_connected";
-    
-    if (EBOX.isconnected()) {
-        connected = "connected";
+    if (!EBOX.isconnected()) {
+        serial_printf(
+            sender->GetSerial(), 
+            "status,connected:%d\n",
+            EBOX.isconnected()
+        );
+    } else {
+        serial_printf(
+            sender->GetSerial(), 
+            "status,connected:%d,adc:%d,mode:%d,levelA:%d,levelB:%d\n",
+            EBOX.isconnected(),
+            et312_adc_enabled(), 
+            et312_get_mode(), 
+            level_to_percentage(et312_get_level('A')),
+            level_to_percentage(et312_get_level('B'))
+        );
     }
-
-    sender->GetSerial()->println("device-status," + connected);
 }
 
 void commandModeSet(SerialCommands* sender)
@@ -167,49 +179,49 @@ void commandModeSet(SerialCommands* sender)
     char* modeStr = sender->Next();
 
     if (modeStr == NULL) {
-        sender->GetSerial()->println("Mode parameter missing");
+        serial_printf(sender->GetSerial(), "Mode parameter missing\n");
         return;
     }
   
     int mode = atoi(modeStr);
 
     if (!EBOX.isconnected()) {
-        sender->GetSerial()->println(strprintf("mode-set,%d,failed:no_device_connected", mode));
+        serial_printf(sender->GetSerial(), "mode-set,%d,failed:no_device_connected\n", mode);
         return;
     }
 
-    if (mode < 1 || mode > nummodes) {
-        sender->GetSerial()->println(strprintf("mode-set,%d,failed:mode_out_of_range", mode));
+    if (mode < 0x76 || mode > 0x8C) {
+        serial_printf(sender->GetSerial(), "mode-set,%d,failed:mode_out_of_range\n", mode);
         return;
     }
 
-    et312_set_mode(modepick[mode-1]);
+    et312_set_mode(mode);
 
-    sender->GetSerial()->println(strprintf("mode-set,%d,success", mode));
+    serial_printf(sender->GetSerial(), "mode-set,%d,success\n", mode);
 }
 
 void commandAdcEnable(SerialCommands* sender)
 {  
     if (!EBOX.isconnected()) {
-        sender->GetSerial()->println(strprintf("adc-enable,failed:no_device_connected"));
+        serial_printf(sender->GetSerial(), "adc-enable,failed:no_device_connected\n");
         return;
     }
 
     et312_enable_adc();
 
-    sender->GetSerial()->println(strprintf("adc-enable,success"));
+    serial_printf(sender->GetSerial(), "adc-enable,success\n");
 }
 
 void commandAdcDisable(SerialCommands* sender)
 {  
     if (!EBOX.isconnected()) {
-        sender->GetSerial()->println(strprintf("adc-disable,failed:no_device_connected"));
+        serial_printf(sender->GetSerial(), "adc-disable,failed:no_device_connected\n");
         return;
     }
 
     et312_disable_adc();
 
-    sender->GetSerial()->println(strprintf("adc-disable,success"));
+    serial_printf(sender->GetSerial(), "adc-disable,success\n");
 }
 
 void commandLevelSet(SerialCommands* sender)
@@ -218,12 +230,12 @@ void commandLevelSet(SerialCommands* sender)
     char* levelStr = sender->Next();
 
     if (channelStr == NULL) {
-        sender->GetSerial()->println("Channel parameter missing");
+        serial_printf(sender->GetSerial(), "Channel parameter missing\n");
         return;
     }
 
     if (levelStr == NULL) {
-        sender->GetSerial()->println("Level parameter missing");
+        serial_printf(sender->GetSerial(), "Level parameter missing\n");
         return;
     }
   
@@ -231,20 +243,20 @@ void commandLevelSet(SerialCommands* sender)
     int level = atoi(levelStr);
 
     if (!EBOX.isconnected()) {
-        sender->GetSerial()->println(strprintf("level-set,%c,%d,failed:no_device_connected", channel, level));
+        serial_printf(sender->GetSerial(), "level-set,%c,%d,failed:no_device_connected\n", channel, level);
         return;
     }
 
     if (level < 0 || level > 99) {
-        sender->GetSerial()->println(strprintf("level-set,%c,%d,failed:level_out_of_range", channel, level));
+        serial_printf(sender->GetSerial(), "level-set,%c,%d,failed:level_out_of_range\n", channel, level);
         return;
     }
 
-    int level_byte_value = (int) round(level * 255 * 0.01);
+    int level_byte_value = map(level, 0, 99, 0, 255);
 
     et312_set_level(channel, level_byte_value);
 
-    sender->GetSerial()->println(strprintf("level-set,%c,%d,success", channel, level));
+    serial_printf(sender->GetSerial(), "level-set,%c,%d,success\n", channel, level);
 }
 
 
@@ -253,19 +265,23 @@ void commandLevelGet(SerialCommands* sender)
     char* channelStr = sender->Next();
 
     if (channelStr == NULL) {
-        sender->GetSerial()->println("Channel parameter missing");
+        serial_printf(sender->GetSerial(), "Channel parameter missing\n");
         return;
     }
   
     char channel = channelStr[0];
 
     if (!EBOX.isconnected()) {
-        sender->GetSerial()->println(strprintf("level-get,%c,failed:no_device_connected", channel));
+        serial_printf(sender->GetSerial(), "level-get,%c,failed:no_device_connected\n", channel);
         return;
     }
 
     int level_byte_value = et312_get_level(channel);
-    int level = (int) round(level_byte_value * 100 / 255);
+    int level = level_to_percentage(level_byte_value);
 
-    sender->GetSerial()->println(strprintf("level-get,%c,success:%d", channel, level));
+    serial_printf(sender->GetSerial(), "level-get,%c,success:%d\n", channel, level);
+}
+
+int level_to_percentage(int level) {
+    return map(level, 0, 255, 0, 99);
 }
