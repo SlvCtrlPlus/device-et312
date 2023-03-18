@@ -83,13 +83,13 @@ void commandStatus(SerialCommands* sender)
     if (!EBOX.isconnected()) {
         serial_printf(
             sender->GetSerial(), 
-            "status,connected:%d,adc:,mode:,levelA:,levelB:\n",
+            "status;connected:%d,adc:,mode:,levelA:,levelB:\n",
             EBOX.isconnected()
         );
     } else {
         serial_printf(
             sender->GetSerial(), 
-            "status,connected:%d,adc:%d,mode:%d,levelA:%d,levelB:%d\n",
+            "status;connected:%d,adc:%d,mode:%d,levelA:%d,levelB:%d\n",
             EBOX.isconnected(),
             et312_adc_enabled(), 
             et312_get_mode(), 
